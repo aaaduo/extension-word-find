@@ -16,6 +16,9 @@
     filters: { q: '', tag: 'all', sort: 'recent' },
     selected: new Set(),
     expanded: {},
+    externalKey: null,
+    radar: null,
+    radarSeeds: '',
     lastPendingTs: 0
   };
 
@@ -99,6 +102,12 @@
     };
   }
 
+  function clampNumber(value, min, max, fallback) {
+    const number = parseInt(value, 10);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.max(min, Math.min(max, number));
+  }
+
   function fillSelect(select, options) {
     select.innerHTML = options
       .map((option) => `<option value="${esc(option.value)}">${esc(option.label)}</option>`)
@@ -109,16 +118,26 @@
     $$('.tab').forEach((tab) => tab.classList.toggle('is-active', tab.dataset.tab === name));
     $$('.panel').forEach((panel) => panel.classList.toggle('is-active', panel.id === 'panel-' + name));
     if (name === 'library') renderLibrary();
+    if (name === 'radar') renderRadar();
     if (name === 'settings') syncSettingsControls();
   }
 
   /* ---------------- 存储 ---------------- */
 
   async function loadState() {
-    const data = await chrome.storage.local.get(['settings', 'input', 'library', 'pending']);
+    const data = await chrome.storage.local.get([
+      'settings',
+      'input',
+      'library',
+      'pending',
+      'radar',
+      'radarSeeds'
+    ]);
     state.settings = { ...WF.DEFAULT_SETTINGS, ...(data.settings || {}) };
     state.input = typeof data.input === 'string' ? data.input : '';
     state.library = Array.isArray(data.library) ? data.library.filter((item) => item && item.keyword) : [];
+    state.radar = data.radar || null;
+    state.radarSeeds = typeof data.radarSeeds === 'string' ? data.radarSeeds : '';
     if (data.pending) {
       await applyPending(data.pending);
     }
@@ -195,19 +214,22 @@
     if (changed) await saveLibrary(records);
   }
 
-  async function addGroupToLibrary(group, flags) {
+  async function addKeywordsToLibrary(keywords, flags) {
     const records = state.library.map((record) => ({ ...record }));
     const map = new Map();
     records.forEach((record) => map.set(WF.keywordKey(record.keyword), record));
     const now = Date.now();
+    const options = flags || {};
     let added = 0;
-    group.forEach((term) => {
+    let updated = 0;
+    (keywords || []).forEach((term) => {
       const keyword = WF.stripQuotes(term).replace(/\s+/g, ' ').trim();
       if (!keyword) return;
       const key = WF.keywordKey(keyword);
       const record = map.get(key);
       if (record) {
-        Object.assign(record, flags);
+        Object.assign(record, options);
+        updated += 1;
       } else {
         const next = {
           keyword,
@@ -216,15 +238,31 @@
           count: 0,
           firstSeen: now,
           lastUsed: 0,
-          ...flags
+          ...options
         };
         map.set(key, next);
         records.push(next);
         added += 1;
       }
     });
-    await saveLibrary(records);
-    return added;
+    if (added || updated) {
+      await saveLibrary(records);
+    }
+    return { added, updated };
+  }
+
+  async function addGroupToLibrary(group, flags) {
+    const result = await addKeywordsToLibrary(group, flags);
+    return result.added;
+  }
+
+  async function appendKeywordsToInput(keywords) {
+    const lines = WF.uniqueKeywords(keywords);
+    if (!lines.length) return 0;
+    const next =
+      (state.input.trim() ? state.input.replace(/\s+$/, '') + '\n' : '') + lines.join('\n');
+    await saveInput(next);
+    return lines.length;
   }
 
   /* ---------------- 关键词工作台 ---------------- */
@@ -531,8 +569,10 @@
       toast('先输入关键词');
       return;
     }
-    const targets = state.settings.openMode === 'first' ? groups.slice(0, 1) : groups;
-    if (targets.length > 6) {
+    const maxTabs = Math.max(1, Number(state.settings.maxTabs) || 10);
+    const targets =
+      state.settings.openMode === 'first' ? groups.slice(0, 1) : groups.slice(0, maxTabs);
+    if (targets.length > 10) {
       const ok = window.confirm('将打开 ' + targets.length + ' 个 Google Trends 标签页，继续吗？');
       if (!ok) return;
     }
@@ -541,8 +581,13 @@
         chrome.tabs.create({ url: WF.buildTrendsUrl(group, state.settings) });
       }, index * 220);
     });
-    await touchKeywords(groups.reduce((all, group) => all.concat(group), []));
-    toast(state.settings.openMode === 'first' ? '已打开第一组' : '已打开 ' + targets.length + ' 个标签页');
+    await touchKeywords(targets.reduce((all, group) => all.concat(group), []));
+    const remaining = groups.length - targets.length;
+    toast(
+      state.settings.openMode === 'first'
+        ? '已打开第一组'
+        : '已打开 ' + targets.length + ' 组' + (remaining > 0 ? '，还有 ' + remaining + ' 组未打开' : '')
+    );
   }
 
   async function copyAllLinks() {
@@ -554,6 +599,133 @@
     const links = groups.map((group) => WF.buildTrendsUrl(group, state.settings)).join('\n');
     const ok = await copyText(links);
     toast(ok ? '已复制 ' + groups.length + ' 条链接' : '复制失败');
+  }
+
+  /* ---------------- 自动挖词 ---------------- */
+
+  function radarStatusText() {
+    const radar = state.radar || {};
+    let text = radar.message || '尚未开始。';
+    if (radar.phase === 'running' && radar.nextBatchAt && radar.nextBatchAt > Date.now()) {
+      text += ' 下一批约 ' + Math.ceil((radar.nextBatchAt - Date.now()) / 1000) + ' 秒后。';
+    }
+    return text;
+  }
+
+  function renderRadar() {
+    const radar = state.radar || {};
+    const phase = radar.phase || 'idle';
+    const running = phase === 'running';
+    const paused = phase === 'paused';
+    const active = running || paused;
+
+    const toggle = $('#radarToggle');
+    toggle.textContent = running ? '暂停' : paused ? '继续' : '开始挖词';
+    toggle.classList.toggle('btn-primary', !running);
+    toggle.dataset.mode = running ? 'pause' : paused ? 'resume' : 'start';
+    $('#radarStop').hidden = !active;
+
+    const seedCount = WF.parseSeeds($('#radarSeeds').value).length;
+    $('#radarSeedCount').textContent = seedCount + ' 个';
+
+    const related = Array.isArray(radar.related) ? radar.related : [];
+    const effective = Array.isArray(radar.effective) ? radar.effective : [];
+    const processed = Number(radar.processed) || 0;
+    const max = Number(radar.maxKeywords) || Number(state.settings.radarMaxKeywords) || 200;
+
+    $('#radarStatSeeds').textContent = String(radar.totalSeeds || seedCount);
+    $('#radarStatRelated').textContent = String(related.length);
+    $('#radarStatEffective').textContent = String(effective.length);
+    $('#radarStatProcessed').textContent = String(processed);
+    $('#radarProgressBar').style.width = Math.min(100, Math.round((processed / max) * 100)) + '%';
+    $('#radarStatus').textContent = radarStatusText();
+
+    $('#radarEffectiveList').innerHTML = effective.length
+      ? effective
+          .map((item) => {
+            const keyword = item && item.keyword ? item.keyword : '';
+            const percent =
+              item && item.percentage != null
+                ? '<span class="mini count">' + item.percentage + '%</span>'
+                : '';
+            return `<span class="chip" title="${esc(keyword)}">${esc(keyword)}${percent}</span>`;
+          })
+          .join('')
+      : '<span class="muted">还没有有效新词。达到阈值的词会显示在这里。</span>';
+  }
+
+  async function appendRadarSeeds(keywords) {
+    const current = $('#radarSeeds').value;
+    const merged = WF.uniqueKeywords(WF.parseSeeds(current).concat(keywords || []));
+    state.radarSeeds = merged.join('\n');
+    const box = $('#radarSeeds');
+    if (box.value !== state.radarSeeds) box.value = state.radarSeeds;
+    await chrome.storage.local.set({ radarSeeds: state.radarSeeds });
+    renderRadar();
+    return merged.length;
+  }
+
+  async function toggleRadar() {
+    const mode = $('#radarToggle').dataset.mode;
+    if (mode === 'pause' || mode === 'resume') {
+      const result = await sendMessage({
+        type: mode === 'pause' ? 'wf:radar-pause' : 'wf:radar-resume'
+      });
+      if (!result.ok) throw new Error(result.error || '操作失败');
+      return;
+    }
+
+    const seeds = WF.parseSeeds($('#radarSeeds').value);
+    if (!seeds.length) {
+      toast('先输入种子关键词');
+      return;
+    }
+    const compare = $('#radarCompare').value.trim();
+    if (!compare && seeds.length < 2) {
+      toast('至少需要两个关键词，或在基准词里填一个');
+      return;
+    }
+
+    const config = {
+      seeds,
+      compare,
+      maxKeywords: Number($('#radarMax').value) || 200,
+      threshold: Number($('#radarThreshold').value) || 0,
+      dateRange: state.settings.dateRange,
+      geo: state.settings.geo,
+      closeTab: $('#radarCloseTab').checked
+    };
+    const result = await sendMessage({ type: 'wf:radar-start', config });
+    if (!result.ok) throw new Error(result.error || '启动失败');
+    toast('已开始挖词，共 ' + result.total + ' 个种子');
+  }
+
+  async function stopRadar() {
+    const result = await sendMessage({ type: 'wf:radar-stop' });
+    if (!result.ok) throw new Error(result.error || '停止失败');
+    toast('已停止挖词');
+  }
+
+  async function importRootsToLibrary() {
+    const result = await addKeywordsToLibrary(WF.WORD_ROOTS, { root: true });
+    toast('内置词根已导入，新增 ' + result.added + ' 个');
+  }
+
+  function externalSearchPanel(keyword) {
+    const q = encodeURIComponent(keyword);
+    const links = [
+      { label: 'Google', url: 'https://www.google.com/search?q=' + q },
+      { label: 'X / Twitter', url: 'https://twitter.com/search?q=' + q },
+      { label: 'Reddit', url: 'https://www.reddit.com/search/?q=' + q },
+      { label: 'Ahrefs 难度', url: 'https://ahrefs.com/keyword-difficulty/?country=us&input=' + q },
+      { label: '域名', url: 'https://namebeta.com/search/' + q }
+    ];
+    return `<div class="lib-external">${links
+      .map(
+        (link) =>
+          `<a href="${esc(link.url)}" target="_blank" rel="noopener noreferrer">${esc(link.label)}</a>`
+      )
+      .join('')}</div>`;
   }
 
   /* ---------------- 词库 ---------------- */
@@ -599,6 +771,7 @@
           ((Number(record.count) || 0) > 0 ? '使用 ' + record.count + ' 次' : '未分析') +
           ' · 最近 ' +
           WF.formatDate(record.lastUsed);
+        const external = state.externalKey === key ? externalSearchPanel(record.keyword) : '';
         return `<div class="lib-row${checked ? ' is-selected' : ''}" data-key="${esc(key)}">
           <input type="checkbox" data-select="${esc(key)}"${checked} aria-label="选择 ${esc(record.keyword)}" />
           <div class="lib-main">
@@ -609,11 +782,12 @@
             <button type="button" data-libact="input" data-key="${esc(key)}" title="加入关键词输入框">加入</button>
             <button type="button" data-libact="compare" data-key="${esc(key)}" title="与第一组关键词一起打开 Trends">对比</button>
             <button type="button" data-libact="copy" data-key="${esc(key)}" title="复制关键词">复制</button>
+            <button type="button" data-libact="external" data-key="${esc(key)}" title="在 Google / X / Reddit / Ahrefs / 域名站查询">查</button>
             <button type="button" data-libact="favorite" data-key="${esc(key)}" title="切换收藏">${record.favorite ? '★' : '☆'}</button>
             <button type="button" data-libact="root" data-key="${esc(key)}" title="切换词根">根</button>
             <button type="button" class="danger" data-libact="delete" data-key="${esc(key)}" title="从词库删除">删</button>
           </div>
-        </div>`;
+        </div>${external}`;
       })
       .join('');
 
@@ -705,6 +879,28 @@
       await saveInput(next);
       switchTab('workbench');
       toast('已加入 ' + records.length + ' 个关键词');
+      return;
+    }
+
+    if (action === 'analyze') {
+      const maxTabs = Math.max(1, Number(state.settings.maxTabs) || 10);
+      const groups = [];
+      for (let i = 0; i < records.length; i += WF.MAX_GROUP_SIZE) {
+        groups.push(records.slice(i, i + WF.MAX_GROUP_SIZE).map((record) => record.keyword));
+      }
+      const targets = groups.slice(0, maxTabs);
+      targets.forEach((group, index) => {
+        setTimeout(() => {
+          chrome.tabs.create({ url: WF.buildTrendsUrl(group, state.settings) });
+        }, index * 220);
+      });
+      await touchKeywords(targets.reduce((all, group) => all.concat(group), []));
+      toast(
+        '已打开 ' +
+          targets.length +
+          ' 组' +
+          (groups.length > targets.length ? '，还有 ' + (groups.length - targets.length) + ' 组未打开' : '')
+      );
       return;
     }
 
@@ -865,31 +1061,53 @@
 
   /* ---------------- 设置 ---------------- */
 
+  function applyGeoSelect(select, value) {
+    const target = value || '';
+    const exists = WF.GEO_OPTIONS.some((option) => option.value === target);
+    if (!exists && target) {
+      const current = Array.from(select.options).some((option) => option.value === target);
+      if (!current) {
+        const option = document.createElement('option');
+        option.value = target;
+        option.textContent = target + '（自定义）';
+        select.appendChild(option);
+      }
+    }
+    select.value = target;
+  }
+
+  function applyDateSelect(select, value) {
+    const target = WF.DATE_OPTIONS.some((option) => option.value === value)
+      ? value
+      : WF.DEFAULT_SETTINGS.dateRange;
+    select.value = target;
+  }
+
   function syncSettingsControls() {
-    const dateRange = $('#dateRange');
-    if (WF.DATE_OPTIONS.some((option) => option.value === state.settings.dateRange)) {
-      dateRange.value = state.settings.dateRange;
-    } else {
-      dateRange.value = WF.DEFAULT_SETTINGS.dateRange;
-    }
-    const geo = $('#geo');
-    const hasGeo = WF.GEO_OPTIONS.some((option) => option.value === (state.settings.geo || ''));
-    if (!hasGeo && state.settings.geo) {
-      const option = document.createElement('option');
-      option.value = state.settings.geo;
-      option.textContent = state.settings.geo + '（自定义）';
-      geo.appendChild(option);
-    }
-    geo.value = state.settings.geo || '';
+    applyDateSelect($('#dateRange'), state.settings.dateRange);
+    applyGeoSelect($('#geo'), state.settings.geo);
+    applyDateSelect($('#radarDate'), state.settings.dateRange);
+    applyGeoSelect($('#radarGeo'), state.settings.geo);
+
     $('#customDates').hidden = state.settings.dateRange !== 'custom';
     $('#customStart').value = state.settings.customStart || '';
     $('#customEnd').value = state.settings.customEnd || '';
+    $('#radarCustomDates').hidden = state.settings.dateRange !== 'custom';
+    $('#radarCustomStart').value = state.settings.customStart || '';
+    $('#radarCustomEnd').value = state.settings.customEnd || '';
     $('#setOpenMode').value = state.settings.openMode === 'first' ? 'first' : 'all';
+    $('#setMaxTabs').value = String(state.settings.maxTabs || 10);
     $('#setHl').value = state.settings.hl === 'en' ? 'en' : 'zh-CN';
     $('#setInjectTools').checked = Boolean(state.settings.injectTools);
     $('#setInjectStatus').checked = Boolean(state.settings.injectStatus);
     $('#setTargetLang').value = state.settings.targetLang;
     $('#setCopyTranslation').checked = Boolean(state.settings.copyTranslation);
+    $('#radarMax').value = String(state.settings.radarMaxKeywords || 200);
+    $('#radarThreshold').value = String(
+      state.settings.radarThreshold == null ? 20 : state.settings.radarThreshold
+    );
+    $('#radarCompare').value = state.settings.radarCompare || '';
+    $('#radarCloseTab').checked = state.settings.radarCloseTab !== false;
   }
 
   /* ---------------- 待处理关键词 ---------------- */
@@ -922,6 +1140,16 @@
     }, 180);
     inputBox.addEventListener('input', saveInputDebounced);
 
+    const radarSeedsBox = $('#radarSeeds');
+    const saveRadarSeedsDebounced = debounce(() => {
+      state.radarSeeds = radarSeedsBox.value;
+      chrome.storage.local
+        .set({ radarSeeds: state.radarSeeds })
+        .then(() => renderRadar())
+        .catch((error) => toast('保存失败：' + error.message));
+    }, 180);
+    radarSeedsBox.addEventListener('input', saveRadarSeedsDebounced);
+
     $('#toolRow').addEventListener('click', async (event) => {
       const button = event.target.closest('button[data-tool]');
       if (!button) return;
@@ -934,7 +1162,7 @@
         groups = WF.sortGroups(groups);
         toast('已排序');
       } else if (tool === 'tidy') {
-        groups = WF.normalizeGroups(groups);
+        groups = WF.tidyGroups(groups);
         toast('已整理');
       } else if (tool === 'sample') {
         groups = [
@@ -965,11 +1193,107 @@
       saveSettings({ customEnd: event.target.value }).catch(() => {});
     });
 
+    $('#panel-radar').addEventListener('change', (event) => {
+      const el = event.target;
+      if (el.id === 'radarDate') {
+        saveSettings({ dateRange: el.value }).catch((error) => toast('保存失败：' + error.message));
+      } else if (el.id === 'radarGeo') {
+        saveSettings({ geo: el.value }).catch((error) => toast('保存失败：' + error.message));
+      } else if (el.id === 'radarMax') {
+        saveSettings({ radarMaxKeywords: clampNumber(el.value, 1, 500, 200) }).catch(() => {});
+      } else if (el.id === 'radarThreshold') {
+        saveSettings({ radarThreshold: clampNumber(el.value, 0, 500, 20) }).catch(() => {});
+      } else if (el.id === 'radarCompare') {
+        saveSettings({ radarCompare: el.value.trim() }).catch(() => {});
+      } else if (el.id === 'radarCloseTab') {
+        saveSettings({ radarCloseTab: el.checked }).catch(() => {});
+      } else if (el.id === 'radarCustomStart') {
+        saveSettings({ customStart: el.value }).catch(() => {});
+      } else if (el.id === 'radarCustomEnd') {
+        saveSettings({ customEnd: el.value }).catch(() => {});
+      }
+    });
+
     $('#analyzeAll').addEventListener('click', () => {
       analyzeAll().catch((error) => toast('操作失败：' + error.message));
     });
     $('#copyAllLinks').addEventListener('click', () => {
       copyAllLinks().catch((error) => toast('操作失败：' + error.message));
+    });
+
+    $('#radarSeedTools').addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-radar]');
+      if (!button) return;
+      const action = button.dataset.radar;
+      try {
+        if (action === 'import-input') {
+          const keywords = getGroups().reduce((all, group) => all.concat(group), []);
+          if (!keywords.length) {
+            toast('输入框里还没有关键词');
+            return;
+          }
+          const total = await appendRadarSeeds(keywords);
+          toast('已导入，种子共 ' + total + ' 个');
+        } else if (action === 'import-library') {
+          if (!state.library.length) {
+            toast('词库还是空的');
+            return;
+          }
+          const total = await appendRadarSeeds(state.library.map((record) => record.keyword));
+          toast('已导入，种子共 ' + total + ' 个');
+        } else if (action === 'import-roots') {
+          const total = await appendRadarSeeds(WF.WORD_ROOTS);
+          toast('已导入内置词根，种子共 ' + total + ' 个');
+        } else if (action === 'clear-seeds') {
+          const ok = window.confirm('清空种子关键词？');
+          if (!ok) return;
+          state.radarSeeds = '';
+          $('#radarSeeds').value = '';
+          await chrome.storage.local.set({ radarSeeds: '' });
+          renderRadar();
+        }
+      } catch (error) {
+        toast('操作失败：' + error.message);
+      }
+    });
+
+    $('#radarToggle').addEventListener('click', () => {
+      toggleRadar().catch((error) => toast('操作失败：' + error.message));
+    });
+
+    $('#radarStop').addEventListener('click', () => {
+      stopRadar().catch((error) => toast('操作失败：' + error.message));
+    });
+
+    $('#radarCopy').addEventListener('click', async () => {
+      const effective = state.radar && Array.isArray(state.radar.effective) ? state.radar.effective : [];
+      if (!effective.length) {
+        toast('还没有有效新词');
+        return;
+      }
+      const ok = await copyText(effective.map((item) => item.keyword).join('\n'));
+      toast(ok ? '已复制 ' + effective.length + ' 个有效新词' : '复制失败');
+    });
+
+    $('#radarAddInput').addEventListener('click', async () => {
+      const effective = state.radar && Array.isArray(state.radar.effective) ? state.radar.effective : [];
+      if (!effective.length) {
+        toast('还没有有效新词');
+        return;
+      }
+      const count = await appendKeywordsToInput(effective.map((item) => item.keyword));
+      switchTab('workbench');
+      toast('已加入 ' + count + ' 个关键词');
+    });
+
+    $('#radarAddLibrary').addEventListener('click', async () => {
+      const effective = state.radar && Array.isArray(state.radar.effective) ? state.radar.effective : [];
+      if (!effective.length) {
+        toast('还没有有效新词');
+        return;
+      }
+      const result = await addKeywordsToLibrary(effective.map((item) => item.keyword), {});
+      toast('已加入词库，新增 ' + result.added + ' 个');
     });
 
     $('#groupList').addEventListener('click', (event) => {
@@ -1065,6 +1389,9 @@
         addKeywordToFirstGroup(record.keyword).catch((error) => toast('操作失败：' + error.message));
       } else if (action === 'copy') {
         copyText(record.keyword).then((ok) => toast(ok ? '关键词已复制' : '复制失败'));
+      } else if (action === 'external') {
+        state.externalKey = state.externalKey === key ? null : key;
+        renderLibrary();
       } else if (action === 'favorite') {
         updateRecord(key, { favorite: !record.favorite }).catch((error) => toast('操作失败：' + error.message));
       } else if (action === 'root') {
@@ -1099,6 +1426,7 @@
       const el = event.target;
       const patches = {
         setOpenMode: { openMode: el.value },
+        setMaxTabs: { maxTabs: clampNumber(el.value, 1, 20, 10) },
         setHl: { hl: el.value },
         setInjectTools: { injectTools: el.checked },
         setInjectStatus: { injectStatus: el.checked },
@@ -1126,6 +1454,8 @@
         fileInput.dataset.mode = 'all';
         fileInput.value = '';
         fileInput.click();
+      } else if (action === 'roots') {
+        importRootsToLibrary().catch((error) => toast('操作失败：' + error.message));
       } else if (action === 'reset') {
         resetAll().catch((error) => toast('操作失败：' + error.message));
       }
@@ -1168,6 +1498,19 @@
           renderWorkbench();
         }
       }
+      if (changes.radar) {
+        state.radar = changes.radar.newValue || null;
+        renderRadar();
+      }
+      if (changes.radarSeeds) {
+        state.radarSeeds =
+          typeof changes.radarSeeds.newValue === 'string' ? changes.radarSeeds.newValue : '';
+        const box = $('#radarSeeds');
+        if (document.activeElement !== box && box.value !== state.radarSeeds) {
+          box.value = state.radarSeeds;
+        }
+        renderRadar();
+      }
       if (changes.pending && changes.pending.newValue) {
         await applyPending(changes.pending.newValue);
       }
@@ -1179,15 +1522,30 @@
   async function init() {
     fillSelect($('#dateRange'), WF.DATE_OPTIONS);
     fillSelect($('#geo'), WF.GEO_OPTIONS);
+    fillSelect($('#radarDate'), WF.DATE_OPTIONS);
+    fillSelect($('#radarGeo'), WF.GEO_OPTIONS);
     fillSelect($('#setTargetLang'), WF.TARGET_LANGS);
+    $('#radarCompareList').innerHTML = WF.COMPARE_PRESETS.map(
+      (item) => `<option value="${esc(item.keyword)}">${esc(item.label)}</option>`
+    ).join('');
+
     bindEvents();
     await loadState();
+
     $('#inputBox').value = state.input;
+    $('#radarSeeds').value = state.radarSeeds;
     syncSettingsControls();
     renderStats();
     renderWorkbench();
     renderLibrary();
+    renderRadar();
     switchTab('workbench');
+
+    setInterval(() => {
+      if (state.radar && state.radar.phase === 'running' && state.radar.nextBatchAt) {
+        $('#radarStatus').textContent = radarStatusText();
+      }
+    }, 1000);
   }
 
   if (document.readyState === 'loading') {

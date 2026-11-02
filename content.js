@@ -161,6 +161,18 @@
     );
 
     wrapper.appendChild(
+      makeButton(compact ? '藏' : '收藏', '加入 WordFind 词库收藏', (button) => {
+        chrome.runtime.sendMessage({ type: 'wf:favorite', keyword }, (response) => {
+          if (chrome.runtime.lastError) {
+            flash(button, '×');
+            return;
+          }
+          flash(button, response && response.ok ? '✓' : '×');
+        });
+      })
+    );
+
+    wrapper.appendChild(
       makeButton(
         compact ? '引' : '引号',
         '为此关键词添加或去掉双引号',

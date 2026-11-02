@@ -22,6 +22,7 @@
       <nav class="tabs" id="tabs">
         <button class="tab is-active" data-tab="workbench" type="button">关键词</button>
         <button class="tab" data-tab="library" type="button">词库<span class="pill" id="badgeLibrary">0</span></button>
+        <button class="tab" data-tab="radar" type="button">挖词</button>
         <button class="tab" data-tab="settings" type="button">设置</button>
       </nav>
 
@@ -105,6 +106,7 @@
           </div>
           <div class="bulk-actions" id="bulkActions">
             <button data-bulk="input" type="button">加入输入框</button>
+            <button data-bulk="analyze" type="button">批量分析</button>
             <button data-bulk="favorite" type="button">收藏</button>
             <button data-bulk="unfavorite" type="button">取消收藏</button>
             <button data-bulk="root" type="button">词根</button>
@@ -125,6 +127,88 @@
           </div>
         </section>
 
+        <section class="panel" id="panel-radar">
+          <div class="card input-card">
+            <div class="label-row">
+              <label for="radarSeeds">种子关键词</label>
+              <span id="radarSeedCount" class="muted">0 个</span>
+            </div>
+            <textarea
+              id="radarSeeds"
+              spellcheck="false"
+              placeholder="每行一个关键词，或用分号分隔&#10;translator&#10;processor"
+            ></textarea>
+            <div class="tool-row" id="radarSeedTools">
+              <button data-radar="import-input" type="button">从输入框导入</button>
+              <button data-radar="import-library" type="button">从词库导入</button>
+              <button data-radar="import-roots" type="button">内置词根</button>
+              <button data-radar="clear-seeds" type="button">清空</button>
+            </div>
+          </div>
+
+          <div class="card control-card">
+            <div class="control-grid">
+              <label class="control">
+                <span>地区</span>
+                <select id="radarGeo"></select>
+              </label>
+              <label class="control">
+                <span>时间范围</span>
+                <select id="radarDate"></select>
+              </label>
+              <label class="control">
+                <span>最大词数</span>
+                <input id="radarMax" type="number" min="1" max="500" />
+              </label>
+              <label class="control">
+                <span>有效阈值 %</span>
+                <input id="radarThreshold" type="number" min="0" max="500" />
+              </label>
+            </div>
+            <div class="custom-dates" id="radarCustomDates" hidden>
+              <input type="date" id="radarCustomStart" />
+              <span class="muted">至</span>
+              <input type="date" id="radarCustomEnd" />
+            </div>
+            <label class="control radar-compare">
+              <span>对比基准词 <em>用于计算增长百分比</em></span>
+              <input id="radarCompare" list="radarCompareList" placeholder="例如 gpts；留空则用第一个种子" />
+            </label>
+            <datalist id="radarCompareList"></datalist>
+            <label class="switch-row radar-close">
+              <span>完成后关闭后台标签页<small>挖词在独立后台标签页中运行，不打扰当前页面</small></span>
+              <input type="checkbox" id="radarCloseTab" />
+            </label>
+            <div class="action-row">
+              <button class="btn-primary" id="radarToggle" type="button">开始挖词</button>
+              <button id="radarStop" type="button" hidden>停止</button>
+            </div>
+            <p class="hint" id="radarHint">
+              挖词会打开一个后台 Trends 标签页，自动读取相关搜索并继续扩展，每批间隔 4–6 秒。
+            </p>
+          </div>
+
+          <div class="card" id="radarProgressCard">
+            <div class="radar-stats">
+              <div><b id="radarStatSeeds">0</b><span>本轮种子</span></div>
+              <div><b id="radarStatRelated">0</b><span>相关词</span></div>
+              <div><b id="radarStatEffective">0</b><span>有效新词</span></div>
+              <div><b id="radarStatProcessed">0</b><span>已处理</span></div>
+            </div>
+            <div class="progress"><span id="radarProgressBar"></span></div>
+            <p class="hint" id="radarStatus">尚未开始。</p>
+            <div class="radar-result-head">
+              <span>有效新词</span>
+              <div class="tool-row">
+                <button id="radarCopy" type="button">复制</button>
+                <button id="radarAddInput" type="button">加入输入框</button>
+                <button id="radarAddLibrary" type="button">加入词库</button>
+              </div>
+            </div>
+            <div id="radarEffectiveList" class="chips radar-chips"></div>
+          </div>
+        </section>
+
         <section class="panel" id="panel-settings">
           <div class="card settings-card">
             <h2>打开与分析</h2>
@@ -134,6 +218,10 @@
                 <option value="all">全部打开</option>
                 <option value="first">只打开第一组</option>
               </select>
+            </label>
+            <label class="setting-row">
+              <span>批量分析最多打开<small>「分析全部」和词库批量分析的上限</small></span>
+              <input type="number" id="setMaxTabs" min="1" max="20" class="number-input" />
             </label>
             <label class="setting-row">
               <span>Trends 界面语言<small>影响打开的 Google Trends 页面</small></span>
@@ -147,7 +235,7 @@
           <div class="card settings-card">
             <h2>页面注入</h2>
             <label class="switch-row">
-              <span>显示快捷按钮<small>在 Trends 关键词旁显示复制 / 对比 / 分析 / 引号</small></span>
+              <span>显示快捷按钮<small>在 Trends 关键词旁显示复制 / 对比 / 分析 / 收藏 / 引号</small></span>
               <input type="checkbox" id="setInjectTools" />
             </label>
             <label class="switch-row">
@@ -173,6 +261,7 @@
             <div class="data-actions">
               <button data-data="export" type="button">导出全部数据</button>
               <button data-data="import" type="button">导入数据</button>
+              <button data-data="roots" type="button">导入内置词根</button>
               <button data-data="reset" class="danger" type="button">恢复默认</button>
             </div>
             <p class="muted">所有数据只保存在本机浏览器，不会上传到第三方。</p>
@@ -180,8 +269,8 @@
 
           <div class="card about">
             <h2>关于</h2>
-            <p>WordFind 关键词雷达 v1.0.0</p>
-            <p>功能思路参考 Google Trends 辅助工具，代码为独立重写。</p>
+            <p>WordFind 关键词雷达 v1.1.0</p>
+            <p>合并 TrendsBar 与 Trends Radar 的重复功能后独立重写，界面全中文。</p>
             <p>翻译与相关词请求直接发往 Google，不使用第三方评分服务。</p>
           </div>
         </section>

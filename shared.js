@@ -14,10 +14,15 @@
     customEnd: '',
     hl: 'zh-CN',
     openMode: 'all',
+    maxTabs: 10,
     injectTools: true,
     injectStatus: true,
     copyTranslation: false,
-    targetLang: 'zh-CN'
+    targetLang: 'zh-CN',
+    radarMaxKeywords: 200,
+    radarThreshold: 20,
+    radarCompare: 'gpts',
+    radarCloseTab: true
   };
 
   var DATE_OPTIONS = [
@@ -64,6 +69,33 @@
     { label: 'Português', value: 'pt' },
     { label: 'Русский', value: 'ru' },
     { label: 'العربية', value: 'ar' }
+  ];
+
+  /** 从 Trends Radar 的 Root Analysis 合并而来的英文词根列表。 */
+  var WORD_ROOTS = [
+    'Translator', 'Processor', 'Designer', 'Compiler', 'Analyzer', 'Evaluator',
+    'Sender', 'Receiver', 'Interpreter', 'Uploader', 'Calculator', 'Generator',
+    'Sample', 'Template', 'Format', 'Builder', 'Scheme', 'Pattern', 'Checker',
+    'Detector', 'Scraper', 'Manager', 'Example', 'Explorer', 'Dashboard',
+    'Planner', 'Tracker', 'Recorder', 'Optimizer', 'Scheduler', 'Converter',
+    'Viewer', 'Extractor', 'Convert', 'Monitor', 'Notifier', 'Verifier',
+    'Simulator', 'Assistant', 'Constructor', 'Comparator', 'Navigator',
+    'Syncer', 'Connector', 'Online', 'Cataloger', 'Responder', 'Downloader',
+    'Maker', 'Creator', 'Editor', 'Guide'
+  ];
+
+  /** 固定对比基准词预设（数值为参考搜索量，来自 Radar 的默认列表）。 */
+  var COMPARE_PRESETS = [
+    { keyword: 'good morning images', label: 'good morning images（约 130k）' },
+    { keyword: 'happy birthday image', label: 'happy birthday image（约 50k）' },
+    { keyword: 'baby shower', label: 'baby shower（约 25k）' },
+    { keyword: 'image to text converter', label: 'image to text converter（约 10k）' },
+    { keyword: 'gpts', label: 'gpts（约 5k）' },
+    { keyword: 'ai image upscaler', label: 'ai image upscaler（约 3k）' },
+    { keyword: 'random images', label: 'random images（约 2k）' },
+    { keyword: 'banana png', label: 'banana png（约 1.1k）' },
+    { keyword: 'translate text from', label: 'translate text from（约 1k）' },
+    { keyword: 'conversational', label: 'conversational（约 0.6k）' }
   ];
 
   /**
@@ -117,6 +149,42 @@
         return line.trim();
       })
       .join('\n');
+  }
+
+  function uniqueKeywords(items) {
+    var seen = Object.create(null);
+    var result = [];
+    (items || []).forEach(function (item) {
+      var keyword = String(item == null ? '' : item).trim().replace(/\s+/g, ' ');
+      if (!keyword) return;
+      var key = keywordKey(keyword);
+      if (seen[key]) return;
+      seen[key] = true;
+      result.push(keyword);
+    });
+    return result;
+  }
+
+  /** 挖词种子：按换行或分号切分，每行一个关键词。 */
+  function parseSeeds(text) {
+    return uniqueKeywords(String(text == null ? '' : text).split(/[\n;；]+/));
+  }
+
+  /** 合并 Radar 的关键词预处理：连字符/下划线转空格，去掉 .html，压缩空格。 */
+  function preprocessTerm(term) {
+    return String(term == null ? '' : term)
+      .replace(/\.html\b/gi, ' ')
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function tidyGroups(groups) {
+    return normalizeGroups(
+      (groups || []).map(function (group) {
+        return (group || []).map(preprocessTerm);
+      })
+    );
   }
 
   function stripQuotes(term) {
@@ -255,10 +323,16 @@
     DATE_OPTIONS: DATE_OPTIONS,
     GEO_OPTIONS: GEO_OPTIONS,
     TARGET_LANGS: TARGET_LANGS,
+    WORD_ROOTS: WORD_ROOTS,
+    COMPARE_PRESETS: COMPARE_PRESETS,
     splitTerms: splitTerms,
     parseGroups: parseGroups,
     groupLine: groupLine,
     groupsToText: groupsToText,
+    uniqueKeywords: uniqueKeywords,
+    parseSeeds: parseSeeds,
+    preprocessTerm: preprocessTerm,
+    tidyGroups: tidyGroups,
     stripQuotes: stripQuotes,
     keywordKey: keywordKey,
     toggleQuotes: toggleQuotes,
