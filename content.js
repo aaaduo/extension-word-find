@@ -340,11 +340,13 @@
     if (!settings.injectTools && !settings.injectStatus) return;
 
     try {
-      if (window.location.pathname.startsWith(EXPLORE_PATH) || window.location.pathname.startsWith('/trending') || window.location.pathname.startsWith('/explore')) {
-        decorateTables();
+      const path = window.location.pathname;
+      if (path.startsWith(EXPLORE_PATH)) {
         decorateLegend();
         decorateSearchTerms();
         decorateRelated();
+      } else if (path.startsWith('/trending') || path.startsWith('/explore')) {
+        decorateTables();
       }
     } catch (error) {
       console.warn('[WordFind] 页面注入失败', error);
