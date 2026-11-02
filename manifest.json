@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "WordFind 关键词雷达",
+  "short_name": "WordFind",
+  "version": "1.0.0",
+  "description": "Google Trends 关键词工作台：批量分析、相关词、词库与页面快捷按钮，全中文界面。",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "打开 WordFind 关键词雷达",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "contextMenus",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://trends.google.com/*",
+    "https://suggestqueries.google.com/*",
+    "https://translate.googleapis.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://trends.google.com/*"
+      ],
+      "js": [
+        "shared.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

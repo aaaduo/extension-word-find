@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WordFind 关键词雷达</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <img src="icons/icon32.png" width="28" height="28" alt="" />
+          <div class="brand-text">
+            <strong>WordFind</strong>
+            <span>关键词雷达</span>
+          </div>
+        </div>
+        <div class="top-stat"><b id="statLibrary">0</b><span>词库</span></div>
+      </header>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab is-active" data-tab="workbench" type="button">关键词</button>
+        <button class="tab" data-tab="library" type="button">词库<span class="pill" id="badgeLibrary">0</span></button>
+        <button class="tab" data-tab="settings" type="button">设置</button>
+      </nav>
+
+      <main class="main">
+        <section class="panel is-active" id="panel-workbench">
+          <div class="card input-card">
+            <div class="label-row">
+              <label for="inputBox">关键词组</label>
+              <span id="groupSummary" class="muted">0 组 · 0 个词</span>
+            </div>
+            <textarea
+              id="inputBox"
+              spellcheck="false"
+              placeholder="每行一组，逗号分隔，最多 5 个词&#10;running shoes, trail shoes&#10;keyword research tool"
+            ></textarea>
+            <div class="tool-row" id="toolRow">
+              <button data-tool="dedupe" type="button">去重</button>
+              <button data-tool="sort" type="button">排序</button>
+              <button data-tool="tidy" type="button">整理</button>
+              <button data-tool="sample" type="button">示例</button>
+              <button data-tool="clear" type="button">清空</button>
+            </div>
+          </div>
+
+          <div class="card control-card">
+            <div class="control-grid">
+              <label class="control">
+                <span>时间范围</span>
+                <select id="dateRange"></select>
+              </label>
+              <label class="control">
+                <span>地理范围</span>
+                <select id="geo"></select>
+              </label>
+            </div>
+            <div class="custom-dates" id="customDates" hidden>
+              <input type="date" id="customStart" />
+              <span class="muted">至</span>
+              <input type="date" id="customEnd" />
+            </div>
+            <div class="action-row">
+              <button class="btn-primary" id="analyzeAll" type="button">分析全部</button>
+              <button id="copyAllLinks" type="button">复制全部链接</button>
+            </div>
+            <p class="hint" id="analyzeHint"></p>
+          </div>
+
+          <div class="empty" id="emptyState">
+            <div class="empty-icon">⌕</div>
+            <h2>开始关键词分析</h2>
+            <p>每行一组关键词，用逗号分隔，最多 5 个。</p>
+            <p>分析会打开 Google Trends，并把使用记录写入词库。</p>
+          </div>
+
+          <div class="group-list" id="groupList"></div>
+        </section>
+
+        <section class="panel" id="panel-library">
+          <div class="lib-search">
+            <input id="libSearch" type="search" placeholder="搜索词库…" />
+            <select id="libSort">
+              <option value="recent">最近使用</option>
+              <option value="count">使用次数</option>
+              <option value="name">名称排序</option>
+            </select>
+          </div>
+
+          <div class="filter-row" id="libFilters">
+            <button data-filter="all" class="is-active" type="button">全部</button>
+            <button data-filter="favorite" type="button">收藏</button>
+            <button data-filter="root" type="button">词根</button>
+            <button data-filter="history" type="button">历史</button>
+          </div>
+
+          <div class="bulk-row">
+            <label class="check">
+              <input type="checkbox" id="selectAll" />
+              <span>全选</span>
+            </label>
+            <span id="selCount" class="muted">未选择</span>
+          </div>
+          <div class="bulk-actions" id="bulkActions">
+            <button data-bulk="input" type="button">加入输入框</button>
+            <button data-bulk="favorite" type="button">收藏</button>
+            <button data-bulk="unfavorite" type="button">取消收藏</button>
+            <button data-bulk="root" type="button">词根</button>
+            <button data-bulk="delete" class="danger" type="button">删除</button>
+          </div>
+
+          <div class="lib-list" id="libList"></div>
+          <div class="empty small" id="libEmpty" hidden>
+            <h2>词库还是空的</h2>
+            <p>分析过的关键词会自动记入历史；收藏和词根可以手动标记。</p>
+          </div>
+
+          <div class="lib-foot">
+            <button data-lib="export-json" type="button">导出 JSON</button>
+            <button data-lib="export-csv" type="button">导出 CSV</button>
+            <button data-lib="import" type="button">导入</button>
+            <button data-lib="clear" class="danger" type="button">清空词库</button>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-settings">
+          <div class="card settings-card">
+            <h2>打开与分析</h2>
+            <label class="setting-row">
+              <span>分析全部时<small>每组关键词打开一个 Trends 标签页</small></span>
+              <select id="setOpenMode">
+                <option value="all">全部打开</option>
+                <option value="first">只打开第一组</option>
+              </select>
+            </label>
+            <label class="setting-row">
+              <span>Trends 界面语言<small>影响打开的 Google Trends 页面</small></span>
+              <select id="setHl">
+                <option value="zh-CN">中文</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="card settings-card">
+            <h2>页面注入</h2>
+            <label class="switch-row">
+              <span>显示快捷按钮<small>在 Trends 关键词旁显示复制 / 对比 / 分析 / 引号</small></span>
+              <input type="checkbox" id="setInjectTools" />
+            </label>
+            <label class="switch-row">
+              <span>显示词库标记<small>收藏、词根与已分析次数</small></span>
+              <input type="checkbox" id="setInjectStatus" />
+            </label>
+          </div>
+
+          <div class="card settings-card">
+            <h2>翻译</h2>
+            <label class="setting-row">
+              <span>翻译目标语言</span>
+              <select id="setTargetLang"></select>
+            </label>
+            <label class="switch-row">
+              <span>翻译后自动复制<small>翻译完成时把结果复制到剪贴板</small></span>
+              <input type="checkbox" id="setCopyTranslation" />
+            </label>
+          </div>
+
+          <div class="card settings-card">
+            <h2>数据</h2>
+            <div class="data-actions">
+              <button data-data="export" type="button">导出全部数据</button>
+              <button data-data="import" type="button">导入数据</button>
+              <button data-data="reset" class="danger" type="button">恢复默认</button>
+            </div>
+            <p class="muted">所有数据只保存在本机浏览器，不会上传到第三方。</p>
+          </div>
+
+          <div class="card about">
+            <h2>关于</h2>
+            <p>WordFind 关键词雷达 v1.0.0</p>
+            <p>功能思路参考 Google Trends 辅助工具，代码为独立重写。</p>
+            <p>翻译与相关词请求直接发往 Google，不使用第三方评分服务。</p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <input type="file" id="importFile" accept="application/json,.json" hidden />
+
+    <script src="shared.js"></script>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

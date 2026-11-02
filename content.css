@@ -1,0 +1,108 @@
+/* WordFind 关键词雷达 - Trends 页面注入样式 */
+
+.wf-tools,
+.wf-badges {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.wf-tools button {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-block;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid #dbe3ff;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #3554d1;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.wf-tools button:hover {
+  background: #dbe4ff;
+  color: #1d3fc9;
+}
+
+.wf-tools button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.wf-tools button.wf-danger {
+  border-color: #fecdca;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.wf-tools.wf-compact button {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 2px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.wf-badges {
+  gap: 3px;
+}
+
+.wf-badge {
+  display: inline-block;
+  min-width: 14px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.wf-badge.wf-fav {
+  background: #fff7e0;
+  color: #b7791f;
+}
+
+.wf-badge.wf-root {
+  background: #e6f6ee;
+  color: #1f7a4d;
+}
+
+.wf-badge.wf-count {
+  background: #eef2f6;
+  color: #52606d;
+}
+
+.wf-related-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid #dbe3ff;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3554d1;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.wf-related-btn:hover {
+  background: #dbe4ff;
+}
